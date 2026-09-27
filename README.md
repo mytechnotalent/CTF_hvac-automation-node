@@ -78,7 +78,9 @@ Probe.
 | 4 | The SETPOINT Authorization | inverted the authorization verdict so an unauthenticated or replayed SETPOINT envelope is accepted |
 
 The wire is sealed with XChaCha20-Poly1305, keyed through Argon2id. The
-cryptography is correct. Three of the four defects are not in the cipher at all:
+primitives are standard and correctly implemented, but the field passphrase and
+salt are compiled into the image in cleartext, so this is a lab-only key and not
+a secrecy guarantee. Three of the four defects are not in the cipher at all:
 they are an implant that lives on the same chip and survives the reflash that was
 supposed to remove it. The fourth is a policy seam in the SETPOINT command path.
 Read the dead, find the payload, and remove it for good.
