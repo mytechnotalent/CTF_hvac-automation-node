@@ -495,8 +495,8 @@ Flash in BOOTSEL mode (hold BOOT, plug in USB) and copy the UF2 onto the
 | Implant persist gate | `0x20013CF8` | Gates the reserved-sector marker write |
 | Implant re-install gate | `0x20013CF9` | Gates the boot re-install |
 | Implant rootkit gate | `0x20013CFA` | Gates the LCD and log masking |
-| SETPOINT command gate | `0x20013CE6` | Gates the sealed SETPOINT path |
-| Applied setpoint | `0x20013CEA` | Setpoint written after a true verdict |
+| SETPOINT command gate | `0x20013CF3` | Gates the sealed SETPOINT path |
+| Applied setpoint | `0x20013CE6` | Setpoint written after a true verdict |
 | Auth state record | `0x200136AC` | Anti-replay and state-tag record |
 | Auth field key | `0x200136C8` | Derived field key for the tag |
 

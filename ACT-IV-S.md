@@ -199,7 +199,7 @@ gate is at file offset `0xA46F` (VA `0x1000A46F`). The corrected image is:
 ```
 
 **Instruction decode.** `ldr r2, [pc, #112]` loads the re-install gate at
-`0x20013CF9`, and the init prologue clears it at `0x1000A422`. The reserved
+`0x20013CF9`, and the init prologue clears it at `0x1000A418`. The reserved
 sector comes from the literal at `0x1000A494` (`0x103FF000`), and the marker is
 read as a byte by `ldrb r3, [r0, #0]` at `0x1000A424`. `cmp r3, #199` tests the
 marker against `0xC7`. When the marker is present the code branches to
@@ -517,7 +517,7 @@ authenticated-state tag and returns its authorization verdict in `r0`. `cmp r0,
 may reach the applied setpoint. The correct code rejects a failed or replayed
 authorization, so the branch at `0x10007580` must be `beq` (`0xD0`) to the
 `0x10007546` reject path, which returns zero. Only a true verdict falls through
-to `strh r4, [r3, #0]`, which writes the decoded setpoint at `0x20013CF3`. The
+to `strh r4, [r3, #0]`, which writes the decoded setpoint at `0x20013CE6`. The
 condition byte is the high byte at `0x10007581`.
 
 | Address | File offset | Compromised byte | Compromised instruction | Correct byte | Correct instruction |
